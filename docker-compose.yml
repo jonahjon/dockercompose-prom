@@ -1,0 +1,25 @@
+networks:
+  cncf-stack:
+
+services:
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - 9090:9090
+    networks:
+      - cncf-stack
+      
+  grafana:
+    image: grafana/grafana
+    user: "0"
+    environment:
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - 3000:3000
+    volumes:
+      - grafana:/var/lib/grafana
+    networks:
+      - cncf-stack
+  
+volumes:
+  grafana:

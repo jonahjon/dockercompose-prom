@@ -1,0 +1,463 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  CloudMap:
+    Properties:
+      Description: Service Map for Docker Compose project meetupdemo
+      Name: meetupdemo.local
+      Vpc: vpc-a69e2bde
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+  Cluster:
+    Properties:
+      ClusterName: meetupdemo
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+    Type: AWS::ECS::Cluster
+  Cncfstack3000Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: grafana:3000/tcp on cncf-stack network
+      FromPort: 3000
+      GroupId:
+        Ref: CncfstackNetwork
+      IpProtocol: TCP
+      ToPort: 3000
+    Type: AWS::EC2::SecurityGroupIngress
+  Cncfstack9090Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: prometheus:9090/tcp on cncf-stack network
+      FromPort: 9090
+      GroupId:
+        Ref: CncfstackNetwork
+      IpProtocol: TCP
+      ToPort: 9090
+    Type: AWS::EC2::SecurityGroupIngress
+  CncfstackNetwork:
+    Properties:
+      GroupDescription: meetupdemo Security Group for cncf-stack network
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      - Key: com.docker.compose.network
+        Value: cncf-stack
+      VpcId: vpc-a69e2bde
+    Type: AWS::EC2::SecurityGroup
+  CncfstackNetworkIngress:
+    Properties:
+      Description: Allow communication within network cncf-stack
+      GroupId:
+        Ref: CncfstackNetwork
+      IpProtocol: "-1"
+      SourceSecurityGroupId:
+        Ref: CncfstackNetwork
+    Type: AWS::EC2::SecurityGroupIngress
+  GrafanaAccessPoint:
+    Properties:
+      AccessPointTags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      - Key: com.docker.compose.volume
+        Value: grafana
+      - Key: Name
+        Value: meetupdemo_grafana
+      FileSystemId: fs-15ab8210
+    Type: AWS::EFS::AccessPoint
+  GrafanaNFSMountTargetOnSubnet122ea739:
+    Properties:
+      FileSystemId: fs-15ab8210
+      SecurityGroups:
+      - Ref: CncfstackNetwork
+      SubnetId: subnet-122ea739
+    Type: AWS::EFS::MountTarget
+  GrafanaNFSMountTargetOnSubnet60777119:
+    Properties:
+      FileSystemId: fs-15ab8210
+      SecurityGroups:
+      - Ref: CncfstackNetwork
+      SubnetId: subnet-60777119
+    Type: AWS::EFS::MountTarget
+  GrafanaNFSMountTargetOnSubnetccdfce96:
+    Properties:
+      FileSystemId: fs-15ab8210
+      SecurityGroups:
+      - Ref: CncfstackNetwork
+      SubnetId: subnet-ccdfce96
+    Type: AWS::EFS::MountTarget
+  GrafanaNFSMountTargetOnSubnetf3aa8ab8:
+    Properties:
+      FileSystemId: fs-15ab8210
+      SecurityGroups:
+      - Ref: CncfstackNetwork
+      SubnetId: subnet-f3aa8ab8
+    Type: AWS::EFS::MountTarget
+  GrafanaService:
+    DependsOn:
+    - GrafanaTCP3000Listener
+    - GrafanaNFSMountTargetOnSubnetccdfce96
+    - GrafanaNFSMountTargetOnSubnet122ea739
+    - GrafanaNFSMountTargetOnSubnet60777119
+    - GrafanaNFSMountTargetOnSubnetf3aa8ab8
+    Properties:
+      Cluster:
+        Fn::GetAtt:
+        - Cluster
+        - Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+      - ContainerName: grafana
+        ContainerPort: 3000
+        TargetGroupArn:
+          Ref: GrafanaTCP3000TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+          - Ref: CncfstackNetwork
+          Subnets:
+          - subnet-ccdfce96
+          - subnet-122ea739
+          - subnet-60777119
+          - subnet-f3aa8ab8
+      PlatformVersion: 1.4.0
+      PropagateTags: SERVICE
+      SchedulingStrategy: REPLICA
+      ServiceRegistries:
+      - RegistryArn:
+          Fn::GetAtt:
+          - GrafanaServiceDiscoveryEntry
+          - Arn
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      - Key: com.docker.compose.service
+        Value: grafana
+      TaskDefinition:
+        Ref: GrafanaTaskDefinition
+    Type: AWS::ECS::Service
+  GrafanaServiceDiscoveryEntry:
+    Properties:
+      Description: '"grafana" service discovery entry in Cloud Map'
+      DnsConfig:
+        DnsRecords:
+        - TTL: 60
+          Type: A
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: grafana
+      NamespaceId:
+        Ref: CloudMap
+    Type: AWS::ServiceDiscovery::Service
+  GrafanaTCP3000Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: GrafanaTCP3000TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 3000
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  GrafanaTCP3000TargetGroup:
+    Properties:
+      Port: 3000
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      TargetType: ip
+      VpcId: vpc-a69e2bde
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  GrafanaTaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Command:
+        - us-west-2.compute.internal
+        - meetupdemo.local
+        Essential: false
+        Image: docker/ecs-searchdomain-sidecar:1.0
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: meetupdemo
+        Name: Grafana_ResolvConf_InitContainer
+      - DependsOn:
+        - Condition: SUCCESS
+          ContainerName: Grafana_ResolvConf_InitContainer
+        Essential: true
+        Image: grafana/grafana
+        LinuxParameters: {}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: meetupdemo
+        MountPoints:
+        - ContainerPath: /var/lib/grafana
+          SourceVolume: grafana
+        Name: grafana
+        PortMappings:
+        - ContainerPort: 3000
+          HostPort: 3000
+          Protocol: tcp
+        User: "0"
+      Cpu: "256"
+      ExecutionRoleArn:
+        Ref: GrafanaTaskExecutionRole
+      Family: meetupdemo-grafana
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+      TaskRoleArn:
+        Ref: GrafanaTaskRole
+      Volumes:
+      - EFSVolumeConfiguration:
+          AuthorizationConfig:
+            AccessPointId:
+              Ref: GrafanaAccessPoint
+            IAM: ENABLED
+          FilesystemId: fs-15ab8210
+          TransitEncryption: ENABLED
+        Name: grafana
+    Type: AWS::ECS::TaskDefinition
+  GrafanaTaskExecutionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      - Key: com.docker.compose.service
+        Value: grafana
+    Type: AWS::IAM::Role
+  GrafanaTaskRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - elasticfilesystem:ClientMount
+            - elasticfilesystem:ClientWrite
+            - elasticfilesystem:ClientRootAccess
+            Condition:
+              StringEquals:
+                elasticfilesystem:AccessPointArn:
+                  Ref: GrafanaAccessPoint
+            Effect: Allow
+            Principal: {}
+            Resource:
+            - arn:aws:elasticfilesystem:us-west-2:164382793440:file-system/fs-15ab8210
+          Version: 2012-10-17
+        PolicyName: MeetupdemoGrafanaVolumeMountPolicy
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      - Key: com.docker.compose.service
+        Value: grafana
+    Type: AWS::IAM::Role
+  LoadBalancer:
+    Properties:
+      LoadBalancerAttributes:
+      - Key: load_balancing.cross_zone.enabled
+        Value: "true"
+      Scheme: internet-facing
+      Subnets:
+      - subnet-ccdfce96
+      - subnet-122ea739
+      - subnet-60777119
+      - subnet-f3aa8ab8
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      Type: network
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  LogGroup:
+    Properties:
+      LogGroupName: /docker-compose/meetupdemo
+    Type: AWS::Logs::LogGroup
+  PrometheusService:
+    DependsOn:
+    - PrometheusTCP9090Listener
+    Properties:
+      Cluster:
+        Fn::GetAtt:
+        - Cluster
+        - Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+      - ContainerName: prometheus
+        ContainerPort: 9090
+        TargetGroupArn:
+          Ref: PrometheusTCP9090TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+          - Ref: CncfstackNetwork
+          Subnets:
+          - subnet-ccdfce96
+          - subnet-122ea739
+          - subnet-60777119
+          - subnet-f3aa8ab8
+      PlatformVersion: 1.4.0
+      PropagateTags: SERVICE
+      SchedulingStrategy: REPLICA
+      ServiceRegistries:
+      - RegistryArn:
+          Fn::GetAtt:
+          - PrometheusServiceDiscoveryEntry
+          - Arn
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      - Key: com.docker.compose.service
+        Value: prometheus
+      TaskDefinition:
+        Ref: PrometheusTaskDefinition
+    Type: AWS::ECS::Service
+  PrometheusServiceDiscoveryEntry:
+    Properties:
+      Description: '"prometheus" service discovery entry in Cloud Map'
+      DnsConfig:
+        DnsRecords:
+        - TTL: 60
+          Type: A
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: prometheus
+      NamespaceId:
+        Ref: CloudMap
+    Type: AWS::ServiceDiscovery::Service
+  PrometheusTCP9090Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: PrometheusTCP9090TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 9090
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+  PrometheusTCP9090TargetGroup:
+    Properties:
+      Port: 9090
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      TargetType: ip
+      VpcId: vpc-a69e2bde
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  PrometheusTaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Command:
+        - us-west-2.compute.internal
+        - meetupdemo.local
+        Essential: false
+        Image: docker/ecs-searchdomain-sidecar:1.0
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: meetupdemo
+        Name: Prometheus_ResolvConf_InitContainer
+      - DependsOn:
+        - Condition: SUCCESS
+          ContainerName: Prometheus_ResolvConf_InitContainer
+        Essential: true
+        Image: prom/prometheus
+        LinuxParameters: {}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: meetupdemo
+        Name: prometheus
+        PortMappings:
+        - ContainerPort: 9090
+          HostPort: 9090
+          Protocol: tcp
+      Cpu: "256"
+      ExecutionRoleArn:
+        Ref: PrometheusTaskExecutionRole
+      Family: meetupdemo-prometheus
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+    Type: AWS::ECS::TaskDefinition
+  PrometheusTaskExecutionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+      - Key: com.docker.compose.project
+        Value: meetupdemo
+      - Key: com.docker.compose.service
+        Value: prometheus
+    Type: AWS::IAM::Role
+
